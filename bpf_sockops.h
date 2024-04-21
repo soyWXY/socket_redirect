@@ -6,7 +6,6 @@
 #include <bpf/bpf_helpers.h>
 #include <linux/bpf.h>
 #include <sys/socket.h>
-#include "syscall.h"
 
 struct sockmap_key {
     __u32 family;

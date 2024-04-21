@@ -5,9 +5,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <linux/bpf.h>
+#include <bpf/bpf.h>
 
 #include "socket_redir.skel.h"
-#include "syscall.h"
 
 static const char *cgroup_path = "/sys/fs/cgroup/";
 
@@ -48,7 +48,8 @@ int main() {
         goto clean_skel;
     }
 
-    skel->links.bpf_sockmap = bpf_program__attach_cgroup(skel->progs.bpf_sockmap, cgrp);
+    struct bpf_program *prog_sockops = skel->progs.bpf_sockmap;
+    skel->links.bpf_sockmap = bpf_program__attach_cgroup(prog_sockops, cgrp);
     if (!skel->links.bpf_sockmap) {
         puts("fail to attach to cgroup");
         err = 1;
@@ -56,12 +57,12 @@ int main() {
     }
 
     // msg_verdict attach to map sockmap_ops
-    union bpf_attr attr = {
-        .target_fd = bpf_map__fd(skel->maps.sockmap_ops),
-        .attach_bpf_fd = bpf_program__fd(skel->progs.bpf_redir),
-        .attach_type = BPF_SK_MSG_VERDICT};
-    int redir_link = bpf(BPF_PROG_ATTACH, &attr, sizeof(attr));
-    if (redir_link < 0) {
+    struct bpf_program *prog_redir = skel->progs.bpf_redir;
+    err = bpf_prog_attach(
+        bpf_program__fd(prog_redir),
+        bpf_map__fd(skel->maps.sockmap_ops),
+        bpf_program__expected_attach_type(prog_redir), 0);
+    if (err) {
         puts("fail to attach to map");
         err = 1;
         goto close_cgrp;
@@ -73,10 +74,10 @@ int main() {
         sleep(1);
     }
 
-    memset(&attr, 0, sizeof(attr));
-    attr.target_fd = bpf_program__fd(skel->progs.bpf_sockmap);
-    attr.attach_type = BPF_SK_MSG_VERDICT;
-    bpf(BPF_PROG_DETACH, &attr, sizeof(attr));
+    bpf_prog_detach2(
+        bpf_program__fd(prog_redir),
+        bpf_map__fd(skel->maps.sockmap_ops),
+        bpf_program__expected_attach_type(prog_redir));
 close_cgrp:
     close(cgrp);
 clean_skel:
